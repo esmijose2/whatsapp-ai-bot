@@ -4,29 +4,82 @@ const Groq = require('groq-sdk');
 const express = require('express');
 require('dotenv').config();
 
-// ===== SERVIDOR EXPRESS PARA MANTENER ACTIVO =====
+// ========================================
+// SERVIDOR EXPRESS (mantiene bot activo)
+// ========================================
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('🤖 Bot de WhatsApp activo y funcionando!');
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Bot WhatsApp</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                }
+                .container {
+                    text-align: center;
+                    background: white;
+                    padding: 40px;
+                    border-radius: 20px;
+                    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+                }
+                h1 { color: #25D366; margin: 0 0 10px 0; }
+                p { color: #666; font-size: 18px; }
+                .status { 
+                    display: inline-block;
+                    width: 12px;
+                    height: 12px;
+                    background: #25D366;
+                    border-radius: 50%;
+                    animation: pulse 2s infinite;
+                }
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.5; }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🤖 Bot de WhatsApp</h1>
+                <p><span class="status"></span> ONLINE</p>
+                <p>Envía: <strong>!bot [tu pregunta]</strong></p>
+            </div>
+        </body>
+        </html>
+    `);
 });
 
 app.get('/status', (req, res) => {
     res.json({
         status: 'online',
         uptime: process.uptime(),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        memoryUsage: process.memoryUsage()
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`🌐 Servidor ejecutándose en puerto ${PORT}`);
+    console.log(`🌐 Servidor web en puerto ${PORT}`);
 });
 
-// ===== CLIENTE DE WHATSAPP =====
+// ========================================
+// CLIENTE DE WHATSAPP
+// ========================================
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({
+        dataPath: '.wwebjs_auth'
+    }),
     puppeteer: {
         headless: true,
         args: [
@@ -36,296 +89,209 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
+            '--single-process',
             '--disable-gpu'
         ]
     }
 });
 
+// ========================================
+// GROQ AI
+// ========================================
 const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY
 });
 
+// Historial de conversaciones
 const conversationHistory = new Map();
 
+// ========================================
+// EVENTOS DE WHATSAPP
+// ========================================
+
 client.on('qr', (qr) => {
-    console.log('\n================================');
+    console.log('\n' + '='.repeat(50));
     console.log('🔷 CÓDIGO QR PARA WHATSAPP:');
-    console.log('================================\n');
+    console.log('='.repeat(50) + '\n');
     qrcode.generate(qr, { small: true });
-    console.log('\n================================');
-    console.log('📱 PASOS:');
+    console.log('\n' + '='.repeat(50));
+    console.log('📱 PASOS PARA CONECTAR:');
     console.log('1. Abre WhatsApp en tu teléfono');
-    console.log('2. Ve a Ajustes > Dispositivos vinculados');
-    console.log('3. Toca en "Vincular dispositivo"');
-    console.log('4. Escanea el código QR de arriba');
-    console.log('================================\n');
+    console.log('2. Ve a Ajustes (⚙️) > Dispositivos vinculados');
+    console.log('3. Toca "Vincular dispositivo"');
+    console.log('4. Escanea el código QR de arriba ☝️');
+    console.log('='.repeat(50) + '\n');
 });
 
 client.on('ready', () => {
-    console.log('✅ ¡BOT CONECTADO Y FUNCIONANDO 24/7!');
+    console.log('\n' + '✅'.repeat(25));
+    console.log('🎉 ¡BOT CONECTADO Y FUNCIONANDO 24/7!');
     console.log('📝 Comando: !bot [tu pregunta]');
-    console.log('💚 Estado: ONLINE\n');
+    console.log('💚 Estado: ONLINE');
+    console.log('✅'.repeat(25) + '\n');
 });
 
+client.on('authenticated', () => {
+    console.log('🔐 Autenticación exitosa');
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('❌ Error de autenticación:', msg);
+    console.log('💡 Solución: Elimina la carpeta .wwebjs_auth y escanea el QR nuevamente');
+});
+
+client.on('disconnected', (reason) => {
+    console.log('⚠️ Bot desconectado:', reason);
+    console.log('🔄 Intentando reconectar...');
+});
+
+// ========================================
+// PROCESAR MENSAJES
+// ========================================
 client.on('message', async (message) => {
     try {
         const chatId = message.from;
         const messageText = message.body.trim();
+        
+        // Ignorar mensajes de grupos (opcional)
+        const chat = await message.getChat();
+        if (chat.isGroup) {
+            // Si quieres que funcione en grupos, comenta estas 2 líneas
+            return;
+        }
 
-        // Activar con !bot
+        // Verificar comando !bot
         if (messageText.toLowerCase().startsWith('!bot')) {
             const query = messageText.substring(4).trim();
 
+            // Validar que haya una pregunta
             if (!query) {
-                await message.reply('@bot\n\n💡 Escribe tu pregunta después de !bot\n\nEjemplo:\n!bot ¿Qué es la inteligencia artificial?');
+                await message.reply(
+                    '@bot\n\n' +
+                    '💡 *Cómo usar el bot:*\n\n' +
+                    'Escribe: !bot seguido de tu pregunta\n\n' +
+                    '*Ejemplos:*\n' +
+                    '• !bot ¿Qué es la inteligencia artificial?\n' +
+                    '• !bot Escribe un poema sobre el mar\n' +
+                    '• !bot Dame 5 tips para estudiar mejor'
+                );
                 return;
             }
 
-            console.log(`📨 Nueva consulta: "${query.substring(0, 50)}..."`);
+            console.log(`\n📨 Nueva consulta de ${chatId.split('@')[0]}`);
+            console.log(`❓ Pregunta: "${query.substring(0, 60)}${query.length > 60 ? '...' : ''}"`);
 
-            const chat = await message.getChat();
+            // Mostrar "escribiendo..."
             await chat.sendStateTyping();
 
-            // Manejar historial
+            // Obtener o crear historial
             if (!conversationHistory.has(chatId)) {
                 conversationHistory.set(chatId, []);
             }
             const history = conversationHistory.get(chatId);
 
+            // Agregar mensaje del usuario
             history.push({
                 role: 'user',
                 content: query
             });
 
-            // Mantener solo últimos 10 mensajes
-            if (history.length > 10) {
-                history.shift();
-                history.shift();
+            // Limitar historial (mantener últimos 6 mensajes = 3 intercambios)
+            if (history.length > 6) {
+                history.splice(0, 2); // Eliminar los 2 más antiguos
             }
 
             // Llamar a Groq AI
-            const chatCompletion = await groq.chat.completions.create({
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'Eres un asistente virtual útil, amigable y conciso. Respondes en español de manera clara y profesional. Mantienes respuestas breves pero completas.'
-                    },
-                    ...history
-                ],
-                model: 'llama-3.3-70b-versatile',
-                temperature: 0.7,
-                max_tokens: 1024,
-            });
+            try {
+                const chatCompletion = await groq.chat.completions.create({
+                    messages: [
+                        {
+                            role: 'system',
+                            content: 'Eres un asistente virtual útil, amigable y conciso. Respondes en español de manera clara y profesional. Tus respuestas son informativas pero no demasiado largas. Usas emojis ocasionalmente para hacer la conversación más amena.'
+                        },
+                        ...history
+                    ],
+                    model: 'llama-3.3-70b-versatile',
+                    temperature: 0.7,
+                    max_tokens: 800,
+                    top_p: 1,
+                    stream: false
+                });
 
-            const aiResponse = chatCompletion.choices[0]?.message?.content || 'Lo siento, no pude generar una respuesta.';
+                const aiResponse = chatCompletion.choices[0]?.message?.content;
 
-            history.push({
-                role: 'assistant',
-                content: aiResponse
-            });
+                if (!aiResponse) {
+                    throw new Error('Respuesta vacía de la IA');
+                }
 
-            await message.reply(`@bot\n\n${aiResponse}`);
-            console.log(`✅ Respuesta enviada exitosamente`);
+                // Agregar respuesta al historial
+                history.push({
+                    role: 'assistant',
+                    content: aiResponse
+                });
+
+                // Enviar respuesta
+                await message.reply(`@bot\n\n${aiResponse}`);
+
+                console.log(`✅ Respuesta enviada (${aiResponse.length} caracteres)`);
+
+            } catch (aiError) {
+                console.error('❌ Error de IA:', aiError.message);
+                
+                // Mensajes de error específicos
+                let errorMessage = '@bot\n\n';
+                if (aiError.message.includes('rate_limit')) {
+                    errorMessage += '⚠️ He alcanzado el límite de consultas.\n\nPor favor intenta de nuevo en unos minutos.';
+                } else if (aiError.message.includes('invalid_api_key')) {
+                    errorMessage += '❌ Error de configuración.\n\nContacta al administrador del bot.';
+                } else {
+                    errorMessage += '⚠️ Ocurrió un error al procesar tu mensaje.\n\nIntenta de nuevo en unos segundos.';
+                }
+                
+                await message.reply(errorMessage);
+            }
         }
 
     } catch (error) {
-        console.error('❌ Error al procesar mensaje:', error.message);
+        console.error('❌ Error general:', error);
         try {
-            await message.reply('@bot\n\n⚠️ Ocurrió un error al procesar tu mensaje.\n\nPor favor intenta de nuevo en unos segundos.');
-        } catch (replyError) {
-            console.error('❌ Error al enviar mensaje de error:', replyError.message);
+            await message.reply('@bot\n\n⚠️ Error inesperado. Por favor intenta de nuevo.');
+        } catch (e) {
+            console.error('❌ No se pudo enviar mensaje de error:', e);
         }
     }
 });
 
-client.on('auth_failure', (msg) => {
-    console.error('❌ Error de autenticación:', msg);
-});
-
-client.on('disconnected', (reason) => {
-    console.log('⚠️ Bot desconectado:', reason);
-    console.log('💡 Reiniciando conexión...');
-});
-
+// ========================================
+// INICIAR BOT
+// ========================================
+console.log('🚀 Iniciando bot de WhatsApp...\n');
 client.initialize();
 
-// Limpiar historial cada hora
+// ========================================
+// MANTENIMIENTO
+// ========================================
+
+// Limpiar historial cada 2 horas
 setInterval(() => {
+    const size = conversationHistory.size;
     conversationHistory.clear();
-    console.log('🧹 Historial de conversaciones limpiado');
-}, 60 * 60 * 1000);
+    console.log(`🧹 Historial limpiado (${size} conversaciones eliminadas)`);
+}, 2 * 60 * 60 * 1000);
 
-// Log de estado cada 10 minutos
+// Log de estado cada 15 minutos
 setInterval(() => {
-    console.log(`💚 Bot activo - ${new Date().toLocaleString('es-ES')}`);
-}, 10 * 60 * 1000);
-```
+    const uptime = process.uptime();
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    console.log(`💚 Bot activo - Uptime: ${hours}h ${minutes}m - ${new Date().toLocaleString('es-ES')}`);
+}, 15 * 60 * 1000);
 
-#### 📄 Archivo: `.gitignore`
-```
-node_modules/
-.env
-.wwebjs_auth/
-.wwebjs_cache/
-*.log
-```
+// Manejo de errores no capturados
+process.on('unhandledRejection', (error) => {
+    console.error('❌ Error no manejado:', error);
+});
 
----
-
-### PASO 2: Obtener API Key de Groq (GRATIS - sin tarjeta)
-
-1. Ve a https://console.groq.com/
-2. Sign up con Google o Email (NO pide tarjeta)
-3. Ve a **"API Keys"**
-4. **Create API Key**
-5. Copia la key (empieza con `gsk_...`)
-6. Guárdala (la usarás en el siguiente paso)
-
----
-
-### PASO 3: Desplegar en Render (100% GRATIS)
-
-1. **Ve a https://render.com/**
-
-2. **Haz clic en "Get Started"**
-
-3. **Sign up con GitHub** (sin tarjeta de crédito)
-
-4. **Autoriza Render** a acceder a tus repositorios
-
-5. **Una vez dentro del Dashboard:**
-   - Haz clic en **"New +"** (arriba a la derecha)
-   - Selecciona **"Web Service"**
-
-6. **Conectar repositorio:**
-   - Haz clic en **"Connect a repository"**
-   - Busca `whatsapp-ai-bot`
-   - Haz clic en **"Connect"**
-
-7. **Configuración del servicio:**
-
-   **Name:** `whatsapp-bot` (o el nombre que quieras)
-   
-   **Region:** Elige el más cercano (Oregon para Latinoamérica)
-   
-   **Branch:** `main`
-   
-   **Root Directory:** (déjalo vacío)
-   
-   **Runtime:** `Node`
-   
-   **Build Command:** `npm install`
-   
-   **Start Command:** `npm start`
-   
-   **Instance Type:** Selecciona **"Free"** ⭐
-
-8. **Variables de entorno:**
-   - Scroll hacia abajo hasta **"Environment Variables"**
-   - Haz clic en **"Add Environment Variable"**
-   - **Key:** `GROQ_API_KEY`
-   - **Value:** (pega tu API key de Groq)
-   - Haz clic en **"Add"**
-
-9. **Crear el servicio:**
-   - Scroll hasta abajo
-   - Haz clic en **"Create Web Service"** (botón azul)
-
-10. **Espera el despliegue (2-5 minutos):**
-    - Verás logs en tiempo real
-    - Espera hasta ver: `🔷 CÓDIGO QR PARA WHATSAPP:`
-
----
-
-### PASO 4: Ver el QR y conectar WhatsApp
-
-1. **En los logs de Render** verás el código QR en formato ASCII
-
-2. **OPCIÓN A - Escanear desde la pantalla:**
-   - Abre WhatsApp en tu teléfono
-   - Ajustes > Dispositivos vinculados > Vincular dispositivo
-   - Escanea el QR directamente de la pantalla
-
-3. **OPCIÓN B - Si el QR es difícil de leer:**
-   - Toma screenshot de los logs
-   - Aumenta el zoom
-   - Escanea desde la imagen
-
-4. **Espera el mensaje:**
-```
-   ✅ ¡BOT CONECTADO Y FUNCIONANDO 24/7!
-```
-
----
-
-### PASO 5: Probar el bot
-
-Envía desde cualquier chat:
-```
-!bot hola
-```
-
-Respuesta:
-```
-@bot
-
-¡Hola! ¿En qué puedo ayudarte hoy?
-```
-
----
-
-## 🎉 ¡LISTO! Bot funcionando 100% GRATIS
-
----
-
-## ⚠️ IMPORTANTE: Mantener el bot activo 24/7
-
-El plan gratuito de Render "duerme" después de 15 minutos sin actividad. Para evitarlo:
-
-### Solución 1: UptimeRobot (GRATIS)
-
-1. Ve a https://uptimerobot.com/
-2. Sign up (gratis, sin tarjeta)
-3. **Add New Monitor**
-4. Configuración:
-   - **Monitor Type:** HTTP(s)
-   - **Friendly Name:** WhatsApp Bot
-   - **URL:** (copia la URL de tu servicio en Render, se ve como: `https://whatsapp-bot-xxxx.onrender.com`)
-   - **Monitoring Interval:** 5 minutes
-5. **Create Monitor**
-
-**¿Qué hace?** Hace ping cada 5 minutos para que el servicio nunca se duerma.
-
-### Solución 2: Cron-job.org (GRATIS)
-
-1. Ve a https://cron-job.org/
-2. Sign up
-3. Create cronjob
-4. URL: tu URL de Render
-5. Interval: Every 5 minutes
-
----
-
-## 💰 RESUMEN DE COSTOS
-
-| Servicio | Costo | Límite |
-|----------|-------|--------|
-| **GitHub** | 🆓 GRATIS | Ilimitado |
-| **Groq API** | 🆓 GRATIS | ~6000 requests/día |
-| **Render** | 🆓 GRATIS | 750 horas/mes |
-| **UptimeRobot** | 🆓 GRATIS | 50 monitores |
-| **TOTAL** | **$0.00 USD** | **100% GRATIS** |
-
----
-
-## 🔄 ALTERNATIVA 2: Glitch (también 100% gratis)
-
-Si Render no te funciona:
-
-1. Ve a https://glitch.com/
-2. Sign up con GitHub
-3. **New Project > Import from GitHub**
-4. Pega la URL de tu repo
-5. Agrega variable de entorno en `.env`:
-```
-   GROQ_API_KEY=tu_key_aqui
+process.on('uncaughtException', (error) => {
+    console.error('❌ Excepción no capturada:', error);
+});
